@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { supabase } from "@/lib/supabaseClient";
 
 type Conversation = {
@@ -32,6 +33,8 @@ type TypingStatus = {
 };
 
 export default function AdminChatPage() {
+  const router = useRouter();
+
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [selectedConversation, setSelectedConversation] =
     useState<Conversation | null>(null);
@@ -319,6 +322,21 @@ export default function AdminChatPage() {
     setSelectedConversation(data?.[0] || null);
   }
 
+  async function logout() {
+    await supabase.from("admin_status").upsert({
+      id: "xiaojujun",
+      is_online: false,
+      last_seen_at: new Date().toISOString(),
+      updated_at: new Date().toISOString(),
+    });
+
+    await fetch("/api/admin/logout", {
+      method: "POST",
+    });
+
+    router.push("/admin/login");
+  }
+
   useEffect(() => {
     updateAdminOnline();
     loadConversations();
@@ -384,17 +402,24 @@ export default function AdminChatPage() {
               XiaoJuJun 本人在线
             </div>
 
+            <button
+              onClick={logout}
+              className="mt-4 w-full rounded-xl bg-zinc-800 text-zinc-300 py-2 text-sm font-bold hover:bg-zinc-700 hover:text-white transition"
+            >
+              退出登录
+            </button>
+
             {!soundEnabled && (
               <button
                 onClick={enableSound}
-                className="mt-4 w-full rounded-xl bg-white text-black py-2 text-sm font-bold hover:bg-zinc-200 transition"
+                className="mt-3 w-full rounded-xl bg-white text-black py-2 text-sm font-bold hover:bg-zinc-200 transition"
               >
                 开启新消息声音提醒
               </button>
             )}
 
             {soundEnabled && (
-              <div className="mt-4 text-xs text-green-400">
+              <div className="mt-3 text-xs text-green-400">
                 声音提醒已开启
               </div>
             )}
