@@ -47,45 +47,38 @@ export default function AdminChatPage() {
   const messagesContainerRef = useRef<HTMLDivElement | null>(null);
   const shouldAutoScrollRef = useRef(true);
 
+  const notificationAudioRef = useRef<HTMLAudioElement | null>(null);
   const lastMessageMapRef = useRef<Record<string, string>>({});
   const hasLoadedOnceRef = useRef(false);
 
-  function enableSound() {
-    setSoundEnabled(true);
+  async function enableSound() {
+    try {
+      const audio = new Audio("/notification.mp3");
+      audio.volume = 0.8;
+
+      notificationAudioRef.current = audio;
+      setSoundEnabled(true);
+
+      await audio.play();
+      audio.currentTime = 0;
+    } catch (error) {
+      console.error("Enable sound error:", error);
+      alert(
+        "声音开启失败。请确认 public 文件夹里有 notification.mp3，并且浏览器没有静音。"
+      );
+    }
   }
 
   function playNotificationSound() {
     if (!soundEnabled) return;
 
     try {
-      const AudioContextClass =
-        window.AudioContext ||
-        (
-          window as Window & {
-            webkitAudioContext?: typeof window.AudioContext;
-          }
-        ).webkitAudioContext;
+      const audio = notificationAudioRef.current;
 
-      if (!AudioContextClass) return;
+      if (!audio) return;
 
-      const audioContext = new AudioContextClass();
-      const oscillator = audioContext.createOscillator();
-      const gainNode = audioContext.createGain();
-
-      oscillator.type = "sine";
-      oscillator.frequency.setValueAtTime(880, audioContext.currentTime);
-
-      gainNode.gain.setValueAtTime(0.15, audioContext.currentTime);
-      gainNode.gain.exponentialRampToValueAtTime(
-        0.001,
-        audioContext.currentTime + 0.25
-      );
-
-      oscillator.connect(gainNode);
-      gainNode.connect(audioContext.destination);
-
-      oscillator.start();
-      oscillator.stop(audioContext.currentTime + 0.25);
+      audio.currentTime = 0;
+      audio.play();
     } catch (error) {
       console.error("Play sound error:", error);
     }
@@ -138,7 +131,6 @@ export default function AdminChatPage() {
         const newMessageAt = conversation.last_message_at || "";
 
         const isNewMessage =
-          oldMessageAt &&
           newMessageAt &&
           oldMessageAt !== newMessageAt &&
           conversation.last_sender === "user";
