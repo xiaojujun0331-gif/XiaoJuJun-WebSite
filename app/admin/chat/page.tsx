@@ -282,6 +282,7 @@ export default function AdminChatPage() {
 
   async function selectConversation(conversation: Conversation) {
     setSelectedConversation(conversation);
+
     setUnreadConversationIds((prev) =>
       prev.filter((id) => id !== conversation.id)
     );
@@ -340,6 +341,10 @@ export default function AdminChatPage() {
         updated_at: new Date().toISOString(),
       })
       .eq("id", selectedConversation.id);
+
+    setUnreadConversationIds((prev) =>
+      prev.filter((id) => id !== selectedConversation.id)
+    );
 
     await loadMessages(selectedConversation.id);
     await loadConversations();
@@ -485,6 +490,7 @@ export default function AdminChatPage() {
 
   async function selectAiVisitor(visitorId: string) {
     setSelectedAiVisitorId(visitorId);
+
     setUnreadAiVisitorIds((prev) => prev.filter((id) => id !== visitorId));
 
     shouldAutoScrollRef.current = true;
