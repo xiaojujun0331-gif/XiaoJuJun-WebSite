@@ -10,12 +10,19 @@ function timeoutPromise(ms: number) {
   });
 }
 
+function createFallbackClientMessageId() {
+  return `server_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+}
+
 export async function POST(request: Request) {
   try {
     const body = await request.json();
 
     const message = String(body.message || "").trim();
     const visitorId = String(body.visitorId || "unknown_visitor").trim();
+    const clientMessageId = String(
+      body.clientMessageId || createFallbackClientMessageId()
+    ).trim();
 
     if (!message) {
       return NextResponse.json({
@@ -34,6 +41,7 @@ export async function POST(request: Request) {
       visitor_id: visitorId,
       sender: "user",
       content: message,
+      client_message_id: clientMessageId,
     });
 
     const ai = new GoogleGenAI({
@@ -113,6 +121,7 @@ ${message}
       visitor_id: visitorId,
       sender: "ai",
       content: reply,
+      client_message_id: clientMessageId,
     });
 
     return NextResponse.json({

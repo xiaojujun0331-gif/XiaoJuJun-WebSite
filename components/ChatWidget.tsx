@@ -13,6 +13,7 @@ type Message = {
   text?: string;
   content?: string;
   created_at?: string;
+  client_message_id?: string | null;
 };
 
 type Conversation = {
@@ -23,6 +24,7 @@ type Conversation = {
 
 const VISITOR_ID_KEY = "xiaojujun_visitor_id";
 const AI_CLEARED_AT_KEY = "xiaojujun_ai_cleared_at";
+const AI_HIDDEN_MESSAGE_IDS_KEY = "xiaojujun_ai_hidden_message_ids";
 
 function getVisitorId() {
   if (typeof window === "undefined") return "";
@@ -47,6 +49,35 @@ function saveAiClearedAt(value: string) {
   if (typeof window === "undefined") return;
 
   localStorage.setItem(AI_CLEARED_AT_KEY, value);
+}
+
+function getHiddenAiMessageIds() {
+  if (typeof window === "undefined") return [];
+
+  try {
+    const raw = localStorage.getItem(AI_HIDDEN_MESSAGE_IDS_KEY);
+    if (!raw) return [];
+
+    const parsed = JSON.parse(raw);
+
+    if (!Array.isArray(parsed)) return [];
+
+    return parsed.filter((item) => typeof item === "string");
+  } catch {
+    return [];
+  }
+}
+
+function saveHiddenAiMessageIds(ids: string[]) {
+  if (typeof window === "undefined") return;
+
+  const uniqueIds = Array.from(new Set(ids));
+
+  localStorage.setItem(AI_HIDDEN_MESSAGE_IDS_KEY, JSON.stringify(uniqueIds));
+}
+
+function createClientMessageId() {
+  return `client_${Date.now()}_${crypto.randomUUID().slice(0, 8)}`;
 }
 
 function formatMessageTime(dateString?: string) {
@@ -104,6 +135,9 @@ function ChatWidgetContent() {
   const [conversation, setConversation] = useState<Conversation | null>(null);
   const [aiMessages, setAiMessages] = useState<Message[]>([]);
   const [aiClearedAt, setAiClearedAtState] = useState("");
+  const [hiddenAiMessageIds, setHiddenAiMessageIdsState] = useState<string[]>(
+    []
+  );
   const [humanMessages, setHumanMessages] = useState<Message[]>([]);
   const [userUnreadCount, setUserUnreadCount] = useState(0);
   const [latestAdminPreview, setLatestAdminPreview] = useState("");
@@ -115,6 +149,7 @@ function ChatWidgetContent() {
 
   const lastAdminMessageAtRef = useRef("");
   const hasLoadedHumanOnceRef = useRef(false);
+  const pendingAiMessageIdsRef = useRef<string[]>([]);
 
   const currentMessages = mode === "ai" ? aiMessages : humanMessages;
 
@@ -149,6 +184,10 @@ function ChatWidgetContent() {
   async function loadAiMessages() {
     const visitorId = getVisitorId();
     const clearedAt = aiClearedAt || getAiClearedAt();
+    const hiddenIds =
+      hiddenAiMessageIds.length > 0
+        ? hiddenAiMessageIds
+        : getHiddenAiMessageIds();
 
     const { data, error } = await supabase
       .from("ai_messages")
@@ -163,31 +202,46 @@ function ChatWidgetContent() {
 
     const list = (data || []) as Message[];
 
-    const filteredList = clearedAt
-      ? list.filter((msg) => {
-          if (!msg.created_at) return false;
+    const filteredList = list.filter((msg) => {
+      if (msg.client_message_id && hiddenIds.includes(msg.client_message_id)) {
+        return false;
+      }
 
-          return (
-            new Date(msg.created_at).getTime() >
-            new Date(clearedAt).getTime()
-          );
-        })
-      : list;
+      if (!clearedAt) {
+        return true;
+      }
+
+      if (!msg.created_at) {
+        return false;
+      }
+
+      const msgTime = new Date(msg.created_at).getTime();
+      const clearedTime = new Date(clearedAt).getTime();
+
+      return msgTime > clearedTime;
+    });
 
     setAiMessages(filteredList);
   }
 
   async function clearAiMessages() {
-    const confirmClear = confirm(
-      "确定要清空你这里的 XiaoJuJun AI 聊天记录吗？\n\n注意：这只会清空你自己看到的记录，Admin 后台仍然会保留记录。"
-    );
-
-    if (!confirmClear) return;
-
     const now = new Date().toISOString();
 
+    const currentVisibleIds = aiMessages
+      .map((msg) => msg.client_message_id)
+      .filter((id): id is string => Boolean(id));
+
+    const pendingIds = pendingAiMessageIdsRef.current;
+
+    const mergedHiddenIds = Array.from(
+      new Set([...getHiddenAiMessageIds(), ...currentVisibleIds, ...pendingIds])
+    );
+
     saveAiClearedAt(now);
+    saveHiddenAiMessageIds(mergedHiddenIds);
+
     setAiClearedAtState(now);
+    setHiddenAiMessageIdsState(mergedHiddenIds);
     setAiMessages([]);
   }
 
@@ -351,6 +405,7 @@ function ChatWidgetContent() {
 
   useEffect(() => {
     setAiClearedAtState(getAiClearedAt());
+    setHiddenAiMessageIdsState(getHiddenAiMessageIds());
     loadExistingConversation();
     checkAdminStatus();
   }, []);
@@ -374,7 +429,7 @@ function ChatWidgetContent() {
     }, 1000);
 
     return () => clearInterval(interval);
-  }, [conversation?.id, open, mode, aiClearedAt]);
+  }, [conversation?.id, open, mode, aiClearedAt, hiddenAiMessageIds]);
 
   useEffect(() => {
     scrollToBottom();
@@ -427,6 +482,7 @@ function ChatWidgetContent() {
     if (!input.trim() || !mode || isTyping) return;
 
     const messageText = input;
+    const clientMessageId = createClientMessageId();
 
     const userMessage: Message = {
       role: "user",
@@ -434,12 +490,18 @@ function ChatWidgetContent() {
       text: messageText,
       content: messageText,
       created_at: getNowIso(),
+      client_message_id: clientMessageId,
     };
 
     setInput("");
 
     if (mode === "ai") {
       setIsTyping(true);
+
+      pendingAiMessageIdsRef.current = [
+        ...pendingAiMessageIdsRef.current,
+        clientMessageId,
+      ];
 
       setAiMessages((prev) => [...prev, userMessage]);
 
@@ -451,16 +513,25 @@ function ChatWidgetContent() {
         body: JSON.stringify({
           message: messageText,
           visitorId: getVisitorId(),
+          clientMessageId,
         }),
       })
         .then((res) => res.json())
         .then(async (data) => {
+          const hiddenIds = getHiddenAiMessageIds();
+
+          if (hiddenIds.includes(clientMessageId)) {
+            await loadAiMessages();
+            return;
+          }
+
           const aiReply: Message = {
             role: "bot",
             sender: "ai",
             text: data.reply,
             content: data.reply,
             created_at: getNowIso(),
+            client_message_id: clientMessageId,
           };
 
           setAiMessages((prev) => [...prev, aiReply]);
@@ -468,6 +539,12 @@ function ChatWidgetContent() {
           await loadAiMessages();
         })
         .catch(() => {
+          const hiddenIds = getHiddenAiMessageIds();
+
+          if (hiddenIds.includes(clientMessageId)) {
+            return;
+          }
+
           setAiMessages((prev) => [
             ...prev,
             {
@@ -476,10 +553,16 @@ function ChatWidgetContent() {
               text: "抱歉，XiaoJuJun AI 暂时无法回复，请稍后再试。",
               content: "抱歉，XiaoJuJun AI 暂时无法回复，请稍后再试。",
               created_at: getNowIso(),
+              client_message_id: clientMessageId,
             },
           ]);
         })
         .finally(() => {
+          pendingAiMessageIdsRef.current =
+            pendingAiMessageIdsRef.current.filter(
+              (id) => id !== clientMessageId
+            );
+
           setIsTyping(false);
         });
 
@@ -822,15 +905,23 @@ function ChatWidgetContent() {
             clearUserUnread();
           }
         }}
-        className="relative w-16 h-16 rounded-full bg-white text-black shadow-2xl flex items-center justify-center hover:scale-105 transition"
+        className="relative w-20 h-20 rounded-full bg-white text-black shadow-2xl flex items-center justify-center hover:scale-105 transition overflow-hidden"
       >
         {userUnreadCount > 0 && (
-          <span className="absolute -top-2 -left-2 min-w-6 h-6 px-2 rounded-full bg-red-500 text-white text-xs font-bold flex items-center justify-center border-2 border-black">
+          <span className="absolute -top-1 -left-1 min-w-6 h-6 px-2 rounded-full bg-red-500 text-white text-xs font-bold flex items-center justify-center border-2 border-black z-10">
             {userUnreadCount > 9 ? "9+" : userUnreadCount}
           </span>
         )}
 
-        <span className="text-2xl">{open ? "×" : "💬"}</span>
+        {open ? (
+          <span className="text-3xl font-light leading-none">×</span>
+        ) : (
+          <img
+            src="/chat-icon.png"
+            alt="Chat"
+            className="w-50 h-50 object-contain -translate-x0.5"
+          />
+        )}
       </button>
     </div>
   );
