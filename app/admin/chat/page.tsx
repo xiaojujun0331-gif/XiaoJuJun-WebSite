@@ -38,10 +38,58 @@ export default function AdminChatPage() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [reply, setReply] = useState("");
   const [isUserTyping, setIsUserTyping] = useState(false);
+  const [unreadConversationIds, setUnreadConversationIds] = useState<string[]>(
+    []
+  );
+  const [soundEnabled, setSoundEnabled] = useState(false);
 
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const messagesContainerRef = useRef<HTMLDivElement | null>(null);
   const shouldAutoScrollRef = useRef(true);
+
+  const lastMessageMapRef = useRef<Record<string, string>>({});
+  const hasLoadedOnceRef = useRef(false);
+
+  function enableSound() {
+    setSoundEnabled(true);
+  }
+
+  function playNotificationSound() {
+    if (!soundEnabled) return;
+
+    try {
+      const AudioContextClass =
+        window.AudioContext ||
+        (
+          window as Window & {
+            webkitAudioContext?: typeof window.AudioContext;
+          }
+        ).webkitAudioContext;
+
+      if (!AudioContextClass) return;
+
+      const audioContext = new AudioContextClass();
+      const oscillator = audioContext.createOscillator();
+      const gainNode = audioContext.createGain();
+
+      oscillator.type = "sine";
+      oscillator.frequency.setValueAtTime(880, audioContext.currentTime);
+
+      gainNode.gain.setValueAtTime(0.15, audioContext.currentTime);
+      gainNode.gain.exponentialRampToValueAtTime(
+        0.001,
+        audioContext.currentTime + 0.25
+      );
+
+      oscillator.connect(gainNode);
+      gainNode.connect(audioContext.destination);
+
+      oscillator.start();
+      oscillator.stop(audioContext.currentTime + 0.25);
+    } catch (error) {
+      console.error("Play sound error:", error);
+    }
+  }
 
   function handleMessagesScroll() {
     const el = messagesContainerRef.current;
@@ -80,18 +128,67 @@ export default function AdminChatPage() {
       return;
     }
 
-    setConversations(data || []);
+    const list = data || [];
 
-    if (!selectedConversation && data && data.length > 0) {
-      setSelectedConversation(data[0]);
+    if (hasLoadedOnceRef.current) {
+      const newUnreadIds: string[] = [];
+
+      list.forEach((conversation) => {
+        const oldMessageAt = lastMessageMapRef.current[conversation.id];
+        const newMessageAt = conversation.last_message_at || "";
+
+        const isNewMessage =
+          oldMessageAt &&
+          newMessageAt &&
+          oldMessageAt !== newMessageAt &&
+          conversation.last_sender === "user";
+
+        if (isNewMessage) {
+          newUnreadIds.push(conversation.id);
+        }
+
+        if (newMessageAt) {
+          lastMessageMapRef.current[conversation.id] = newMessageAt;
+        }
+      });
+
+      if (newUnreadIds.length > 0) {
+        setUnreadConversationIds((prev) => {
+          const merged = [...prev];
+
+          newUnreadIds.forEach((id) => {
+            if (!merged.includes(id)) {
+              merged.push(id);
+            }
+          });
+
+          return merged;
+        });
+
+        playNotificationSound();
+      }
+    } else {
+      list.forEach((conversation) => {
+        if (conversation.last_message_at) {
+          lastMessageMapRef.current[conversation.id] =
+            conversation.last_message_at;
+        }
+      });
+
+      hasLoadedOnceRef.current = true;
+    }
+
+    setConversations(list);
+
+    if (!selectedConversation && list.length > 0) {
+      setSelectedConversation(list[0]);
     }
 
     if (
       selectedConversation &&
-      data &&
-      !data.some((item) => item.id === selectedConversation.id)
+      !list.some((item) => item.id === selectedConversation.id)
     ) {
-      setSelectedConversation(data[0] || null);
+      setSelectedConversation(list[0] || null);
     }
   }
 
@@ -215,6 +312,9 @@ export default function AdminChatPage() {
     setReply("");
     setIsUserTyping(false);
     setSelectedConversation(null);
+    setUnreadConversationIds((prev) => prev.filter((id) => id !== deletingId));
+
+    delete lastMessageMapRef.current[deletingId];
 
     const { data } = await supabase
       .from("conversations")
@@ -249,12 +349,16 @@ export default function AdminChatPage() {
         updated_at: new Date().toISOString(),
       });
     };
-  }, [selectedConversation?.id]);
+  }, [selectedConversation?.id, soundEnabled]);
 
   useEffect(() => {
     if (selectedConversation?.id) {
       loadMessages(selectedConversation.id);
       checkUserTyping(selectedConversation.id);
+
+      setUnreadConversationIds((prev) =>
+        prev.filter((id) => id !== selectedConversation.id)
+      );
     }
   }, [selectedConversation?.id]);
 
@@ -262,16 +366,40 @@ export default function AdminChatPage() {
     scrollToBottom();
   }, [messages.length, isUserTyping]);
 
+  useEffect(() => {
+    if (unreadConversationIds.length > 0) {
+      document.title = "● 新消息 - 客服后台";
+    } else {
+      document.title = "客服后台";
+    }
+  }, [unreadConversationIds.length]);
+
   return (
     <main className="fixed inset-0 z-[60] bg-black text-white">
       <div className="h-screen flex">
         <aside className="w-[330px] border-r border-zinc-800 bg-zinc-950 flex flex-col">
           <div className="p-5 border-b border-zinc-800">
             <h1 className="text-2xl font-bold">客服后台</h1>
+
             <div className="flex items-center gap-2 mt-2 text-sm text-green-400">
               <span className="w-2 h-2 rounded-full bg-green-400"></span>
               XiaoJuJun 本人在线
             </div>
+
+            {!soundEnabled && (
+              <button
+                onClick={enableSound}
+                className="mt-4 w-full rounded-xl bg-white text-black py-2 text-sm font-bold hover:bg-zinc-200 transition"
+              >
+                开启新消息声音提醒
+              </button>
+            )}
+
+            {soundEnabled && (
+              <div className="mt-4 text-xs text-green-400">
+                声音提醒已开启
+              </div>
+            )}
           </div>
 
           <div className="flex-1 overflow-y-auto no-scrollbar">
@@ -283,6 +411,9 @@ export default function AdminChatPage() {
 
             {conversations.map((conversation) => {
               const isActive = selectedConversation?.id === conversation.id;
+              const hasUnread = unreadConversationIds.includes(
+                conversation.id
+              );
 
               return (
                 <button
@@ -292,20 +423,36 @@ export default function AdminChatPage() {
                     setReply("");
                     setIsUserTyping(false);
                     shouldAutoScrollRef.current = true;
+
+                    setUnreadConversationIds((prev) =>
+                      prev.filter((id) => id !== conversation.id)
+                    );
                   }}
                   className={`w-full text-left p-4 border-b border-zinc-900 hover:bg-zinc-900 transition ${
                     isActive ? "bg-zinc-900" : "bg-zinc-950"
                   }`}
                 >
                   <div className="flex items-center gap-3">
-                    <div className="w-11 h-11 rounded-full bg-white text-black flex items-center justify-center font-black">
-                      {conversation.visitor_name?.slice(-4) || "U"}
+                    <div className="relative">
+                      <div className="w-11 h-11 rounded-full bg-white text-black flex items-center justify-center font-black">
+                        {conversation.visitor_name?.slice(-4) || "U"}
+                      </div>
+
+                      {hasUnread && (
+                        <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-red-500 border-2 border-zinc-950"></span>
+                      )}
                     </div>
 
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center justify-between gap-2">
-                        <div className="font-bold truncate">
+                        <div className="font-bold truncate flex items-center gap-2">
                           {conversation.visitor_name || "Visitor"}
+
+                          {hasUnread && (
+                            <span className="text-[10px] px-2 py-0.5 rounded-full bg-red-500 text-white">
+                              新消息
+                            </span>
+                          )}
                         </div>
 
                         <div className="text-[10px] px-2 py-1 rounded-full bg-green-400/10 text-green-400">
