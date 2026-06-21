@@ -54,13 +54,8 @@ function formatMessageTime(dateString?: string) {
     hour12: false,
   });
 
-  if (isToday) {
-    return `今天 ${time}`;
-  }
-
-  if (isYesterday) {
-    return `昨天 ${time}`;
-  }
+  if (isToday) return `今天 ${time}`;
+  if (isYesterday) return `昨天 ${time}`;
 
   const dateText = date.toLocaleDateString("zh-CN", {
     month: "2-digit",
@@ -96,16 +91,29 @@ function ChatWidgetContent() {
   const [conversation, setConversation] = useState<Conversation | null>(null);
   const [aiMessages, setAiMessages] = useState<Message[]>([]);
   const [humanMessages, setHumanMessages] = useState<Message[]>([]);
+  const [userUnreadCount, setUserUnreadCount] = useState(0);
+  const [latestAdminPreview, setLatestAdminPreview] = useState("");
+  const [showAdminPreview, setShowAdminPreview] = useState(false);
 
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const messagesContainerRef = useRef<HTMLDivElement | null>(null);
   const shouldAutoScrollRef = useRef(true);
+
+  const lastAdminMessageAtRef = useRef("");
+  const hasLoadedHumanOnceRef = useRef(false);
 
   const currentMessages = mode === "ai" ? aiMessages : humanMessages;
 
   const showTypingBubble =
     (mode === "ai" && isTyping) ||
     (mode === "human" && isAdminTyping && isAdminOnline);
+
+  function clearUserUnread() {
+    setUserUnreadCount(0);
+    setLatestAdminPreview("");
+    setShowAdminPreview(false);
+    document.title = "XiaoJuJun";
+  }
 
   function handleMessagesScroll() {
     const el = messagesContainerRef.current;
@@ -122,6 +130,28 @@ function ChatWidgetContent() {
       behavior: "smooth",
       block: "end",
     });
+  }
+
+  async function loadExistingConversation() {
+    const visitorId = getVisitorId();
+
+    const { data, error } = await supabase
+      .from("conversations")
+      .select("*")
+      .eq("visitor_id", visitorId)
+      .maybeSingle();
+
+    if (error) {
+      console.error("Load existing conversation error:", error);
+      return;
+    }
+
+    if (!data) return;
+
+    setConversation(data);
+
+    await loadHumanMessages(data.id);
+    await checkTypingStatus(data.id);
   }
 
   async function getOrCreateConversation() {
@@ -180,7 +210,36 @@ function ChatWidgetContent() {
       return;
     }
 
-    setHumanMessages(data || []);
+    const list = data || [];
+
+    const latestAdminMessage = [...list]
+      .reverse()
+      .find((msg) => msg.sender === "admin");
+
+    const latestAdminMessageAt = latestAdminMessage?.created_at || "";
+    const latestAdminMessageText = latestAdminMessage?.content || "";
+
+    if (hasLoadedHumanOnceRef.current) {
+      const hasNewAdminMessage =
+        latestAdminMessageAt &&
+        latestAdminMessageAt !== lastAdminMessageAtRef.current;
+
+      const userIsWatchingHumanChat = open && mode === "human";
+
+      if (hasNewAdminMessage && !userIsWatchingHumanChat) {
+        setUserUnreadCount((prev) => prev + 1);
+        setLatestAdminPreview(latestAdminMessageText || "你有新的回复");
+        setShowAdminPreview(true);
+      }
+    } else {
+      hasLoadedHumanOnceRef.current = true;
+    }
+
+    if (latestAdminMessageAt) {
+      lastAdminMessageAtRef.current = latestAdminMessageAt;
+    }
+
+    setHumanMessages(list);
   }
 
   async function checkAdminStatus() {
@@ -226,6 +285,11 @@ function ChatWidgetContent() {
   }
 
   useEffect(() => {
+    loadExistingConversation();
+    checkAdminStatus();
+  }, []);
+
+  useEffect(() => {
     checkAdminStatus();
 
     const interval = setInterval(() => {
@@ -234,18 +298,39 @@ function ChatWidgetContent() {
       if (conversation?.id) {
         loadHumanMessages(conversation.id);
         checkTypingStatus(conversation.id);
+      } else {
+        loadExistingConversation();
       }
     }, 1000);
 
     return () => clearInterval(interval);
-  }, [conversation?.id]);
+  }, [conversation?.id, open, mode]);
 
   useEffect(() => {
     scrollToBottom();
   }, [currentMessages.length, showTypingBubble]);
 
+  useEffect(() => {
+    if (userUnreadCount > 0) {
+      document.title = `● ${userUnreadCount} 条新消息 - XiaoJuJun`;
+    } else {
+      document.title = "XiaoJuJun";
+    }
+  }, [userUnreadCount]);
+
+  useEffect(() => {
+    if (!showAdminPreview) return;
+
+    const timer = setTimeout(() => {
+      setShowAdminPreview(false);
+    }, 8000);
+
+    return () => clearTimeout(timer);
+  }, [showAdminPreview, latestAdminPreview]);
+
   async function openHumanChat() {
     setMode("human");
+    clearUserUnread();
 
     const conv = await getOrCreateConversation();
 
@@ -381,6 +466,30 @@ function ChatWidgetContent() {
 
   return (
     <div className="fixed bottom-6 right-6 z-50 flex flex-col items-end">
+      {!open && userUnreadCount > 0 && showAdminPreview && (
+        <button
+          onClick={() => {
+            setOpen(true);
+            openHumanChat();
+          }}
+          className="mb-4 w-[300px] max-w-[calc(100vw-32px)] text-left bg-zinc-950 text-white border border-zinc-800 rounded-2xl p-4 shadow-2xl hover:bg-zinc-900 transition"
+        >
+          <div className="flex items-center justify-between gap-3 mb-2">
+            <div className="font-bold text-sm">XiaoJuJun 本人回复了</div>
+
+            <span className="min-w-5 h-5 px-1.5 rounded-full bg-red-500 text-white text-xs font-bold flex items-center justify-center">
+              {userUnreadCount > 9 ? "9+" : userUnreadCount}
+            </span>
+          </div>
+
+          <div className="text-sm text-zinc-300 line-clamp-2">
+            {latestAdminPreview || "你有新的回复"}
+          </div>
+
+          <div className="text-xs text-zinc-600 mt-2">点击查看回复</div>
+        </button>
+      )}
+
       {open && (
         <div className="mb-4 w-[360px] max-w-[calc(100vw-32px)] h-[440px] bg-black text-white border border-zinc-800 rounded-3xl shadow-2xl flex flex-col overflow-hidden">
           {!mode && (
@@ -428,8 +537,17 @@ function ChatWidgetContent() {
                   ></span>
                 </div>
 
-                <div className="text-left">
-                  <div className="font-bold text-lg">XiaoJuJun 本人</div>
+                <div className="text-left flex-1 min-w-0">
+                  <div className="font-bold text-lg flex items-center gap-2">
+                    XiaoJuJun 本人
+
+                    {userUnreadCount > 0 && (
+                      <span className="min-w-5 h-5 px-1.5 rounded-full bg-red-500 text-white text-xs font-bold flex items-center justify-center">
+                        {userUnreadCount > 9 ? "9+" : userUnreadCount}
+                      </span>
+                    )}
+                  </div>
+
                   <div className="flex items-center gap-2 text-sm text-zinc-400">
                     <span
                       className={`w-2 h-2 rounded-full ${
@@ -438,8 +556,13 @@ function ChatWidgetContent() {
                     ></span>
                     {isAdminOnline ? "在线 · 本人客服" : "离线 · 留言模式"}
                   </div>
+
                   <div className="text-xs text-zinc-500 mt-1">
-                    {isAdminOnline ? "可以直接回复" : "Admin 开启时才上线"}
+                    {userUnreadCount > 0
+                      ? `XiaoJuJun 本人回复了 ${userUnreadCount} 条消息`
+                      : isAdminOnline
+                      ? "可以直接回复"
+                      : "Admin 开启时才上线"}
                   </div>
                 </div>
               </button>
@@ -542,11 +665,7 @@ function ChatWidgetContent() {
                         <div>{text}</div>
 
                         {messageTime && (
-                          <div
-                            className={`text-[10px] mt-2 ${
-                              isUser ? "text-zinc-500" : "text-zinc-500"
-                            }`}
-                          >
+                          <div className="text-[10px] text-zinc-500 mt-2">
                             {messageTime}
                           </div>
                         )}
@@ -608,10 +727,22 @@ function ChatWidgetContent() {
       )}
 
       <button
-        onClick={() => setOpen(!open)}
+        onClick={() => {
+          const nextOpen = !open;
+          setOpen(nextOpen);
+
+          if (nextOpen && mode === "human") {
+            clearUserUnread();
+          }
+        }}
         className="relative w-16 h-16 rounded-full bg-white text-black shadow-2xl flex items-center justify-center hover:scale-105 transition"
       >
-        <span className="absolute -top-1 -right-1 w-4 h-4 bg-green-400 border-2 border-black rounded-full"></span>
+        {userUnreadCount > 0 && (
+          <span className="absolute -top-2 -left-2 min-w-6 h-6 px-2 rounded-full bg-red-500 text-white text-xs font-bold flex items-center justify-center border-2 border-black">
+            {userUnreadCount > 9 ? "9+" : userUnreadCount}
+          </span>
+        )}
+
         <span className="text-2xl">{open ? "×" : "💬"}</span>
       </button>
     </div>
