@@ -56,6 +56,38 @@ export default function AdminChatPage() {
 
   const unreadCount = unreadConversationIds.length;
 
+  function formatMessageTime(dateString: string) {
+    const date = new Date(dateString);
+    const now = new Date();
+
+    const isToday = date.toDateString() === now.toDateString();
+
+    const yesterday = new Date();
+    yesterday.setDate(now.getDate() - 1);
+    const isYesterday = date.toDateString() === yesterday.toDateString();
+
+    const time = date.toLocaleTimeString("zh-CN", {
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    });
+
+    if (isToday) {
+      return `今天 ${time}`;
+    }
+
+    if (isYesterday) {
+      return `昨天 ${time}`;
+    }
+
+    const dateText = date.toLocaleDateString("zh-CN", {
+      month: "2-digit",
+      day: "2-digit",
+    });
+
+    return `${dateText} ${time}`;
+  }
+
   async function enableSound() {
     try {
       const audio = new Audio("/notification.mp3");
@@ -563,7 +595,15 @@ export default function AdminChatPage() {
                           {isUser ? "用户" : "XiaoJuJun 本人"}
                         </div>
 
-                        {msg.content}
+                        <div>{msg.content}</div>
+
+                        <div
+                          className={`text-[10px] mt-2 ${
+                            isUser ? "text-zinc-500" : "text-zinc-500"
+                          }`}
+                        >
+                          {formatMessageTime(msg.created_at)}
+                        </div>
                       </div>
                     </div>
                   );
