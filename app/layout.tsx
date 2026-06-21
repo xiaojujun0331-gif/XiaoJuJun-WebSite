@@ -1,5 +1,5 @@
 import "./globals.css";
-import Navbar from "@/components/Navbar";
+import NavbarWrapper from "@/components/NavbarWrapper";
 import ChatWidget from "@/components/ChatWidget";
 
 export default function RootLayout({
@@ -10,7 +10,7 @@ export default function RootLayout({
   return (
     <html lang="en">
       <body>
-        <Navbar />
+        <NavbarWrapper />
         {children}
         <ChatWidget />
       </body>

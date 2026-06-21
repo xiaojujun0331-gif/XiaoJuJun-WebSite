@@ -22,6 +22,7 @@ type Conversation = {
 };
 
 const VISITOR_ID_KEY = "xiaojujun_visitor_id";
+const AI_CLEARED_AT_KEY = "xiaojujun_ai_cleared_at";
 
 function getVisitorId() {
   if (typeof window === "undefined") return "";
@@ -34,6 +35,18 @@ function getVisitorId() {
   }
 
   return visitorId;
+}
+
+function getAiClearedAt() {
+  if (typeof window === "undefined") return "";
+
+  return localStorage.getItem(AI_CLEARED_AT_KEY) || "";
+}
+
+function saveAiClearedAt(value: string) {
+  if (typeof window === "undefined") return;
+
+  localStorage.setItem(AI_CLEARED_AT_KEY, value);
 }
 
 function formatMessageTime(dateString?: string) {
@@ -90,6 +103,7 @@ function ChatWidgetContent() {
 
   const [conversation, setConversation] = useState<Conversation | null>(null);
   const [aiMessages, setAiMessages] = useState<Message[]>([]);
+  const [aiClearedAt, setAiClearedAtState] = useState("");
   const [humanMessages, setHumanMessages] = useState<Message[]>([]);
   const [userUnreadCount, setUserUnreadCount] = useState(0);
   const [latestAdminPreview, setLatestAdminPreview] = useState("");
@@ -130,6 +144,57 @@ function ChatWidgetContent() {
       behavior: "smooth",
       block: "end",
     });
+  }
+
+  async function loadAiMessages() {
+    const visitorId = getVisitorId();
+    const clearedAt = aiClearedAt || getAiClearedAt();
+
+    const { data, error } = await supabase
+      .from("ai_messages")
+      .select("*")
+      .eq("visitor_id", visitorId)
+      .order("created_at", { ascending: true });
+
+    if (error) {
+      console.error("Load AI messages error:", error);
+      return;
+    }
+
+    const list = (data || []) as Message[];
+
+    const filteredList = clearedAt
+      ? list.filter((msg) => {
+          if (!msg.created_at) return false;
+
+          return (
+            new Date(msg.created_at).getTime() >
+            new Date(clearedAt).getTime()
+          );
+        })
+      : list;
+
+    setAiMessages(filteredList);
+  }
+
+  async function clearAiMessages() {
+    const confirmClear = confirm(
+      "确定要清空你这里的 XiaoJuJun AI 聊天记录吗？\n\n注意：这只会清空你自己看到的记录，Admin 后台仍然会保留记录。"
+    );
+
+    if (!confirmClear) return;
+
+    const now = new Date().toISOString();
+
+    saveAiClearedAt(now);
+    setAiClearedAtState(now);
+    setAiMessages([]);
+  }
+
+  async function openAiChat() {
+    setMode("ai");
+    shouldAutoScrollRef.current = true;
+    await loadAiMessages();
   }
 
   async function loadExistingConversation() {
@@ -285,6 +350,7 @@ function ChatWidgetContent() {
   }
 
   useEffect(() => {
+    setAiClearedAtState(getAiClearedAt());
     loadExistingConversation();
     checkAdminStatus();
   }, []);
@@ -301,10 +367,14 @@ function ChatWidgetContent() {
       } else {
         loadExistingConversation();
       }
+
+      if (mode === "ai") {
+        loadAiMessages();
+      }
     }, 1000);
 
     return () => clearInterval(interval);
-  }, [conversation?.id, open, mode]);
+  }, [conversation?.id, open, mode, aiClearedAt]);
 
   useEffect(() => {
     scrollToBottom();
@@ -360,7 +430,9 @@ function ChatWidgetContent() {
 
     const userMessage: Message = {
       role: "user",
+      sender: "user",
       text: messageText,
+      content: messageText,
       created_at: getNowIso(),
     };
 
@@ -378,25 +450,31 @@ function ChatWidgetContent() {
         },
         body: JSON.stringify({
           message: messageText,
+          visitorId: getVisitorId(),
         }),
       })
         .then((res) => res.json())
-        .then((data) => {
-          setAiMessages((prev) => [
-            ...prev,
-            {
-              role: "bot",
-              text: data.reply,
-              created_at: getNowIso(),
-            },
-          ]);
+        .then(async (data) => {
+          const aiReply: Message = {
+            role: "bot",
+            sender: "ai",
+            text: data.reply,
+            content: data.reply,
+            created_at: getNowIso(),
+          };
+
+          setAiMessages((prev) => [...prev, aiReply]);
+
+          await loadAiMessages();
         })
         .catch(() => {
           setAiMessages((prev) => [
             ...prev,
             {
               role: "bot",
+              sender: "ai",
               text: "抱歉，XiaoJuJun AI 暂时无法回复，请稍后再试。",
+              content: "抱歉，XiaoJuJun AI 暂时无法回复，请稍后再试。",
               created_at: getNowIso(),
             },
           ]);
@@ -499,7 +577,7 @@ function ChatWidgetContent() {
               </p>
 
               <button
-                onClick={() => setMode("ai")}
+                onClick={openAiChat}
                 className="w-full flex items-center gap-4 p-4 rounded-2xl bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 transition mb-3"
               >
                 <div className="relative">
@@ -608,7 +686,7 @@ function ChatWidgetContent() {
                   ></span>
                 </div>
 
-                <div>
+                <div className="flex-1 min-w-0">
                   <div className="font-bold">
                     {mode === "ai" ? "XiaoJuJun AI" : "XiaoJuJun 本人"}
                   </div>
@@ -623,6 +701,15 @@ function ChatWidgetContent() {
                       : "离线 · 留言模式"}
                   </div>
                 </div>
+
+                {mode === "ai" && aiMessages.length > 0 && (
+                  <button
+                    onClick={clearAiMessages}
+                    className="text-xs px-3 py-2 rounded-xl border border-zinc-800 text-zinc-400 hover:text-red-400 hover:bg-zinc-900 transition"
+                  >
+                    清空
+                  </button>
+                )}
               </div>
 
               <div
