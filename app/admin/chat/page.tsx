@@ -51,6 +51,8 @@ export default function AdminChatPage() {
   const lastMessageMapRef = useRef<Record<string, string>>({});
   const hasLoadedOnceRef = useRef(false);
 
+  const unreadCount = unreadConversationIds.length;
+
   async function enableSound() {
     try {
       const audio = new Audio("/notification.mp3");
@@ -360,7 +362,7 @@ export default function AdminChatPage() {
 
   useEffect(() => {
     if (unreadConversationIds.length > 0) {
-      document.title = "● 新消息 - 客服后台";
+      document.title = `● ${unreadConversationIds.length} 条新消息 - 客服后台`;
     } else {
       document.title = "客服后台";
     }
@@ -371,7 +373,11 @@ export default function AdminChatPage() {
       <div className="h-screen flex">
         <aside className="w-[330px] border-r border-zinc-800 bg-zinc-950 flex flex-col">
           <div className="p-5 border-b border-zinc-800">
-            <h1 className="text-2xl font-bold">客服后台</h1>
+            <h1 className="text-2xl font-bold">
+              {unreadCount > 0
+                ? `客服后台 · ${unreadCount} 条新消息`
+                : "客服后台"}
+            </h1>
 
             <div className="flex items-center gap-2 mt-2 text-sm text-green-400">
               <span className="w-2 h-2 rounded-full bg-green-400"></span>
