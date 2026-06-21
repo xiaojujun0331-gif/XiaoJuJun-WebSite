@@ -36,6 +36,44 @@ function getVisitorId() {
   return visitorId;
 }
 
+function formatMessageTime(dateString?: string) {
+  if (!dateString) return "";
+
+  const date = new Date(dateString);
+  const now = new Date();
+
+  const isToday = date.toDateString() === now.toDateString();
+
+  const yesterday = new Date();
+  yesterday.setDate(now.getDate() - 1);
+  const isYesterday = date.toDateString() === yesterday.toDateString();
+
+  const time = date.toLocaleTimeString("zh-CN", {
+    hour: "2-digit",
+    minute: "2-digit",
+    hour12: false,
+  });
+
+  if (isToday) {
+    return `今天 ${time}`;
+  }
+
+  if (isYesterday) {
+    return `昨天 ${time}`;
+  }
+
+  const dateText = date.toLocaleDateString("zh-CN", {
+    month: "2-digit",
+    day: "2-digit",
+  });
+
+  return `${dateText} ${time}`;
+}
+
+function getNowIso() {
+  return new Date().toISOString();
+}
+
 export default function ChatWidget() {
   const pathname = usePathname();
 
@@ -238,6 +276,7 @@ function ChatWidgetContent() {
     const userMessage: Message = {
       role: "user",
       text: messageText,
+      created_at: getNowIso(),
     };
 
     setInput("");
@@ -263,6 +302,7 @@ function ChatWidgetContent() {
             {
               role: "bot",
               text: data.reply,
+              created_at: getNowIso(),
             },
           ]);
         })
@@ -272,6 +312,7 @@ function ChatWidgetContent() {
             {
               role: "bot",
               text: "抱歉，XiaoJuJun AI 暂时无法回复，请稍后再试。",
+              created_at: getNowIso(),
             },
           ]);
         })
@@ -476,6 +517,7 @@ function ChatWidgetContent() {
                   const sender = msg.sender;
                   const isUser = msg.role === "user" || sender === "user";
                   const text = msg.text || msg.content || "";
+                  const messageTime = formatMessageTime(msg.created_at);
 
                   return (
                     <div
@@ -497,7 +539,17 @@ function ChatWidgetContent() {
                           </div>
                         )}
 
-                        {text}
+                        <div>{text}</div>
+
+                        {messageTime && (
+                          <div
+                            className={`text-[10px] mt-2 ${
+                              isUser ? "text-zinc-500" : "text-zinc-500"
+                            }`}
+                          >
+                            {messageTime}
+                          </div>
+                        )}
                       </div>
                     </div>
                   );
