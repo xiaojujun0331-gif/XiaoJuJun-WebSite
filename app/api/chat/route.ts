@@ -10,8 +10,46 @@ function timeoutPromise(ms: number) {
   });
 }
 
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function createFallbackClientMessageId() {
   return `server_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+}
+
+async function generateGeminiReply(
+  ai: GoogleGenAI,
+  prompt: string
+): Promise<string> {
+  let response;
+
+  try {
+    response = await Promise.race([
+      ai.models.generateContent({
+        model: "gemini-2.5-flash-lite",
+        contents: prompt,
+      }),
+      timeoutPromise(30000),
+    ]);
+  } catch (firstError) {
+    console.error("Gemini first attempt error:", firstError);
+
+    await sleep(1000);
+
+    response = await Promise.race([
+      ai.models.generateContent({
+        model: "gemini-2.5-flash-lite",
+        contents: prompt,
+      }),
+      timeoutPromise(30000),
+    ]);
+  }
+
+  return (
+    response.text ||
+    "我暂时没有生成到合适回复，你可以换个方式问我，或直接选择 XiaoJuJun 本人留言。"
+  );
 }
 
 export async function POST(request: Request) {
@@ -99,19 +137,9 @@ ${message}
       "XiaoJuJun AI 暂时有点忙，你可以稍后再试，或选择 XiaoJuJun 本人留言。";
 
     try {
-      const response = await Promise.race([
-        ai.models.generateContent({
-          model: "gemini-2.5-flash-lite",
-          contents: prompt,
-        }),
-        timeoutPromise(15000),
-      ]);
-
-      reply =
-        response.text ||
-        "我暂时没有生成到合适回复，你可以换个方式问我，或直接选择 XiaoJuJun 本人留言。";
+      reply = await generateGeminiReply(ai, prompt);
     } catch (geminiError) {
-      console.error("Gemini response error:", geminiError);
+      console.error("Gemini final error:", geminiError);
 
       reply =
         "XiaoJuJun AI 现在回复有点慢，你可以稍后再试，或直接选择「XiaoJuJun 本人」留言。";

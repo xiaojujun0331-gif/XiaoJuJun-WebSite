@@ -30,6 +30,20 @@ export default function Hero() {
             >
               联系我
             </Link>
+
+          <Link
+            href="https://www.youtube.com/@%E5%B0%8F%E7%8B%99%E5%90%9B"
+            className="border border-blue-400 text-blue-400 hover:bg-blue-400 hover:text-black px-6 py-3 rounded-full font-semibold"
+            >
+              YouTube 主页
+            </Link>
+
+            <Link
+            href="https://www.tiktok.com/@xiaojujunfps"
+            className="border border-blue-400 text-blue-400 hover:bg-blue-400 hover:text-black px-6 py-3 rounded-full font-semibold"
+            >
+              TikTok 主页
+            </Link>
         </div>
       </div>
     </section>
