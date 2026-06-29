@@ -18,6 +18,85 @@ function createFallbackClientMessageId() {
   return `server_${Date.now()}_${Math.random().toString(36).slice(2)}`;
 }
 
+function getLocalFallbackReply(message: string) {
+  const text = message.toLowerCase();
+
+  const isGreeting =
+    text.includes("你好") ||
+    text.includes("hello") ||
+    text.includes("hi") ||
+    text.includes("嗨") ||
+    text.includes("哈喽");
+
+  const isCooperation =
+    text.includes("合作") ||
+    text.includes("商务") ||
+    text.includes("推广") ||
+    text.includes("广告") ||
+    text.includes("代言") ||
+    text.includes("collab") ||
+    text.includes("合作邀约");
+
+  const isContact =
+    text.includes("联系") ||
+    text.includes("contact") ||
+    text.includes("微信") ||
+    text.includes("email") ||
+    text.includes("邮箱") ||
+    text.includes("怎么找") ||
+    text.includes("本人");
+
+  const isPrice =
+    text.includes("价格") ||
+    text.includes("报价") ||
+    text.includes("多少钱") ||
+    text.includes("费用") ||
+    text.includes("收费") ||
+    text.includes("rate") ||
+    text.includes("price");
+
+  const isWorks =
+    text.includes("作品") ||
+    text.includes("案例") ||
+    text.includes("portfolio") ||
+    text.includes("work") ||
+    text.includes("内容") ||
+    text.includes("cosplay") ||
+    text.includes("电竞");
+
+  const isIdentity =
+    text.includes("你是谁") ||
+    text.includes("是不是本人") ||
+    text.includes("你是本人") ||
+    text.includes("who are you");
+
+  if (isGreeting) {
+    return "你好呀！我是 XiaoJuJun 网站里的 AI 助手，可以帮你了解作品、合作方向和联系方式。";
+  }
+
+  if (isIdentity) {
+    return "我不是 XiaoJuJun 本人，我是网站里的 AI 助手。如果你想直接联系本人，可以选择「XiaoJuJun 本人」留言。";
+  }
+
+  if (isCooperation) {
+    return "可以的！如果你想合作，可以到 Contact 页面查看联系方式，或选择「XiaoJuJun 本人」留言，会更适合谈具体合作细节。";
+  }
+
+  if (isPrice) {
+    return "具体报价需要看合作内容、平台、使用范围和合作周期。建议你选择「XiaoJuJun 本人」留言，这样会更适合确认价格和合作细节。";
+  }
+
+  if (isContact) {
+    return "你可以到 Contact 页面查看联系方式，或者直接选择「XiaoJuJun 本人」留言。如果是合作或商务内容，联系本人会更准确。";
+  }
+
+  if (isWorks) {
+    return "你可以先到作品页面查看 XiaoJuJun 的内容方向。网站主要展示个人形象、作品、电竞 / Cosplay / 内容创作相关内容。";
+  }
+
+  return "我可以帮你了解 XiaoJuJun 的作品、合作方式、联系方式和网站内容。如果你想谈具体合作，建议直接选择「XiaoJuJun 本人」留言。";
+}
+
 async function generateGeminiReply(
   ai: GoogleGenAI,
   prompt: string
@@ -48,7 +127,7 @@ async function generateGeminiReply(
 
   return (
     response.text ||
-    "我暂时没有生成到合适回复，你可以换个方式问我，或直接选择 XiaoJuJun 本人留言。"
+    "我可以帮你了解 XiaoJuJun 的作品、合作方式和联系方式。如果你想谈具体合作，也可以选择「XiaoJuJun 本人」留言。"
   );
 }
 
@@ -68,13 +147,6 @@ export async function POST(request: Request) {
       });
     }
 
-    if (!process.env.GEMINI_API_KEY) {
-      return NextResponse.json({
-        reply:
-          "XiaoJuJun AI 目前还没有连接完成，请稍后再试，或选择 XiaoJuJun 本人留言。",
-      });
-    }
-
     await supabase.from("ai_messages").insert({
       visitor_id: visitorId,
       sender: "user",
@@ -82,11 +154,14 @@ export async function POST(request: Request) {
       client_message_id: clientMessageId,
     });
 
-    const ai = new GoogleGenAI({
-      apiKey: process.env.GEMINI_API_KEY,
-    });
+    let reply = getLocalFallbackReply(message);
 
-    const prompt = `
+    if (process.env.GEMINI_API_KEY) {
+      const ai = new GoogleGenAI({
+        apiKey: process.env.GEMINI_API_KEY,
+      });
+
+      const prompt = `
 你是 XiaoJuJun 网站里的 AI 客服助手。
 
 重要身份规则：
@@ -131,18 +206,18 @@ XiaoJuJun 的个人品牌定位：
 
 用户的问题是：
 ${message}
-    `.trim();
+      `.trim();
 
-    let reply =
-      "XiaoJuJun AI 暂时有点忙，你可以稍后再试，或选择 XiaoJuJun 本人留言。";
+      try {
+        reply = await generateGeminiReply(ai, prompt);
+      } catch (geminiError) {
+        console.error("Gemini final error:", geminiError);
 
-    try {
-      reply = await generateGeminiReply(ai, prompt);
-    } catch (geminiError) {
-      console.error("Gemini final error:", geminiError);
-
-      reply =
-        "XiaoJuJun AI 现在回复有点慢，你可以稍后再试，或直接选择「XiaoJuJun 本人」留言。";
+        reply = getLocalFallbackReply(message);
+      }
+    } else {
+      console.error("GEMINI_API_KEY is missing. Using local fallback reply.");
+      reply = getLocalFallbackReply(message);
     }
 
     await supabase.from("ai_messages").insert({
@@ -160,7 +235,7 @@ ${message}
 
     return NextResponse.json({
       reply:
-        "XiaoJuJun AI 暂时有点忙，你可以稍后再试，或选择 XiaoJuJun 本人留言。",
+        "我可以帮你了解 XiaoJuJun 的作品、合作方式和联系方式。如果你想谈具体合作，可以选择「XiaoJuJun 本人」留言。",
     });
   }
 }

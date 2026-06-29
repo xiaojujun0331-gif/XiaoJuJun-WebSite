@@ -24,6 +24,7 @@ type Conversation = {
 
 const VISITOR_ID_KEY = "xiaojujun_visitor_id";
 const AI_CLEARED_AT_KEY = "xiaojujun_ai_cleared_at";
+const HUMAN_CLEARED_AT_KEY = "xiaojujun_human_cleared_at";
 const AI_HIDDEN_MESSAGE_IDS_KEY = "xiaojujun_ai_hidden_message_ids";
 
 function getVisitorId() {
@@ -49,6 +50,18 @@ function saveAiClearedAt(value: string) {
   if (typeof window === "undefined") return;
 
   localStorage.setItem(AI_CLEARED_AT_KEY, value);
+}
+
+function getHumanClearedAt() {
+  if (typeof window === "undefined") return "";
+
+  return localStorage.getItem(HUMAN_CLEARED_AT_KEY) || "";
+}
+
+function saveHumanClearedAt(value: string) {
+  if (typeof window === "undefined") return;
+
+  localStorage.setItem(HUMAN_CLEARED_AT_KEY, value);
 }
 
 function getHiddenAiMessageIds() {
@@ -135,6 +148,7 @@ function ChatWidgetContent() {
   const [conversation, setConversation] = useState<Conversation | null>(null);
   const [aiMessages, setAiMessages] = useState<Message[]>([]);
   const [aiClearedAt, setAiClearedAtState] = useState("");
+  const [humanClearedAt, setHumanClearedAtState] = useState("");
   const [hiddenAiMessageIds, setHiddenAiMessageIdsState] = useState<string[]>(
     []
   );
@@ -245,6 +259,15 @@ function ChatWidgetContent() {
     setAiMessages([]);
   }
 
+  async function clearHumanMessages() {
+    const now = new Date().toISOString();
+
+    saveHumanClearedAt(now);
+    setHumanClearedAtState(now);
+    setHumanMessages([]);
+    clearUserUnread();
+  }
+
   async function openAiChat() {
     setMode("ai");
     shouldAutoScrollRef.current = true;
@@ -258,14 +281,18 @@ function ChatWidgetContent() {
       .from("conversations")
       .select("*")
       .eq("visitor_id", visitorId)
+      .order("updated_at", { ascending: false })
+      .limit(1)
       .maybeSingle();
 
     if (error) {
-      console.error("Load existing conversation error:", error);
+      console.warn("Load existing conversation skipped:", error.message || error);
       return;
     }
 
-    if (!data) return;
+    if (!data) {
+      return;
+    }
 
     setConversation(data);
 
@@ -318,6 +345,8 @@ function ChatWidgetContent() {
   }
 
   async function loadHumanMessages(conversationId: string) {
+    const clearedAt = humanClearedAt || getHumanClearedAt();
+
     const { data, error } = await supabase
       .from("messages")
       .select("*")
@@ -329,14 +358,25 @@ function ChatWidgetContent() {
       return;
     }
 
-    const list = data || [];
+    const list = (data || []) as Message[];
 
-    const latestAdminMessage = [...list]
+    const visibleList = clearedAt
+      ? list.filter((msg) => {
+          if (!msg.created_at) return false;
+
+          const msgTime = new Date(msg.created_at).getTime();
+          const clearedTime = new Date(clearedAt).getTime();
+
+          return msgTime > clearedTime;
+        })
+      : list;
+
+    const latestVisibleAdminMessage = [...visibleList]
       .reverse()
       .find((msg) => msg.sender === "admin");
 
-    const latestAdminMessageAt = latestAdminMessage?.created_at || "";
-    const latestAdminMessageText = latestAdminMessage?.content || "";
+    const latestAdminMessageAt = latestVisibleAdminMessage?.created_at || "";
+    const latestAdminMessageText = latestVisibleAdminMessage?.content || "";
 
     if (hasLoadedHumanOnceRef.current) {
       const hasNewAdminMessage =
@@ -358,7 +398,7 @@ function ChatWidgetContent() {
       lastAdminMessageAtRef.current = latestAdminMessageAt;
     }
 
-    setHumanMessages(list);
+    setHumanMessages(visibleList);
   }
 
   async function checkAdminStatus() {
@@ -405,6 +445,7 @@ function ChatWidgetContent() {
 
   useEffect(() => {
     setAiClearedAtState(getAiClearedAt());
+    setHumanClearedAtState(getHumanClearedAt());
     setHiddenAiMessageIdsState(getHiddenAiMessageIds());
     loadExistingConversation();
     checkAdminStatus();
@@ -429,7 +470,14 @@ function ChatWidgetContent() {
     }, 1000);
 
     return () => clearInterval(interval);
-  }, [conversation?.id, open, mode, aiClearedAt, hiddenAiMessageIds]);
+  }, [
+    conversation?.id,
+    open,
+    mode,
+    aiClearedAt,
+    humanClearedAt,
+    hiddenAiMessageIds,
+  ]);
 
   useEffect(() => {
     scrollToBottom();
@@ -793,6 +841,15 @@ function ChatWidgetContent() {
                     清空
                   </button>
                 )}
+
+                {mode === "human" && humanMessages.length > 0 && (
+                  <button
+                    onClick={clearHumanMessages}
+                    className="text-xs px-3 py-2 rounded-xl border border-zinc-800 text-zinc-400 hover:text-red-400 hover:bg-zinc-900 transition"
+                  >
+                    清空
+                  </button>
+                )}
               </div>
 
               <div
@@ -919,7 +976,7 @@ function ChatWidgetContent() {
           <img
             src="/chat-icon.png"
             alt="Chat"
-            className="w-50 h-50 object-contain -translate-x0.5"
+            className="w-50 h-50 object-contain -translate-x-0.5"
           />
         )}
       </button>
