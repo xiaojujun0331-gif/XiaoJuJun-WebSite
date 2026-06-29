@@ -42,25 +42,21 @@ function getVisitorId() {
 
 function getAiClearedAt() {
   if (typeof window === "undefined") return "";
-
   return localStorage.getItem(AI_CLEARED_AT_KEY) || "";
 }
 
 function saveAiClearedAt(value: string) {
   if (typeof window === "undefined") return;
-
   localStorage.setItem(AI_CLEARED_AT_KEY, value);
 }
 
 function getHumanClearedAt() {
   if (typeof window === "undefined") return "";
-
   return localStorage.getItem(HUMAN_CLEARED_AT_KEY) || "";
 }
 
 function saveHumanClearedAt(value: string) {
   if (typeof window === "undefined") return;
-
   localStorage.setItem(HUMAN_CLEARED_AT_KEY, value);
 }
 
@@ -72,7 +68,6 @@ function getHiddenAiMessageIds() {
     if (!raw) return [];
 
     const parsed = JSON.parse(raw);
-
     if (!Array.isArray(parsed)) return [];
 
     return parsed.filter((item) => typeof item === "string");
@@ -85,12 +80,15 @@ function saveHiddenAiMessageIds(ids: string[]) {
   if (typeof window === "undefined") return;
 
   const uniqueIds = Array.from(new Set(ids));
-
   localStorage.setItem(AI_HIDDEN_MESSAGE_IDS_KEY, JSON.stringify(uniqueIds));
 }
 
 function createClientMessageId() {
   return `client_${Date.now()}_${crypto.randomUUID().slice(0, 8)}`;
+}
+
+function createDbId() {
+  return crypto.randomUUID();
 }
 
 function formatMessageTime(dateString?: string) {
@@ -209,10 +207,7 @@ function ChatWidgetContent() {
       .eq("visitor_id", visitorId)
       .order("created_at", { ascending: true });
 
-    if (error) {
-      console.error("Load AI messages error:", error);
-      return;
-    }
+    if (error) return;
 
     const list = (data || []) as Message[];
 
@@ -257,6 +252,8 @@ function ChatWidgetContent() {
     setAiClearedAtState(now);
     setHiddenAiMessageIdsState(mergedHiddenIds);
     setAiMessages([]);
+
+    pendingAiMessageIdsRef.current = [];
   }
 
   async function clearHumanMessages() {
@@ -282,63 +279,82 @@ function ChatWidgetContent() {
       .select("*")
       .eq("visitor_id", visitorId)
       .order("updated_at", { ascending: false })
-      .limit(1)
-      .maybeSingle();
+      .limit(1);
 
-    if (error) {
-      console.warn("Load existing conversation skipped:", error.message || error);
-      return;
-    }
+    if (error) return;
 
-    if (!data) {
-      return;
-    }
+    const existingConversation = data?.[0] as Conversation | undefined;
 
-    setConversation(data);
+    if (!existingConversation) return;
 
-    await loadHumanMessages(data.id);
-    await checkTypingStatus(data.id);
+    setConversation(existingConversation);
+
+    await loadHumanMessages(existingConversation.id);
+    await checkTypingStatus(existingConversation.id);
   }
 
   async function getOrCreateConversation() {
     const visitorId = getVisitorId();
 
-    const { data: existing } = await supabase
+    const { data: existingList, error: existingError } = await supabase
       .from("conversations")
       .select("*")
       .eq("visitor_id", visitorId)
-      .maybeSingle();
+      .order("updated_at", { ascending: false })
+      .limit(1);
 
-    if (existing) {
-      setConversation(existing);
-      return existing;
+    if (existingError) {
+      alert(`读取聊天室失败：${existingError.message}`);
+      return null;
+    }
+
+    if (existingList?.[0]) {
+      const existingConversation = existingList[0] as Conversation;
+      setConversation(existingConversation);
+      return existingConversation;
     }
 
     const visitorName = `Visitor #${visitorId.slice(-4).toUpperCase()}`;
+    const now = new Date().toISOString();
+    const conversationId = createDbId();
 
-    const { data: created, error } = await supabase
+    const { data: createdList, error } = await supabase
       .from("conversations")
       .insert({
+        id: conversationId,
         visitor_id: visitorId,
         visitor_name: visitorName,
         status: "open",
-        updated_at: new Date().toISOString(),
+        last_message: "",
+        last_sender: "user",
+        last_message_at: now,
+        created_at: now,
+        updated_at: now,
       })
       .select("*")
-      .single();
+      .limit(1);
 
     if (error) {
-      console.error("Create conversation error:", error);
+      alert(`创建聊天室失败：${error.message}`);
+      return null;
+    }
+
+    const created = createdList?.[0] as Conversation | undefined;
+
+    if (!created) {
+      alert("聊天室创建失败：Supabase 没有返回资料。");
       return null;
     }
 
     setConversation(created);
 
-    await supabase.from("typing_status").insert({
+    await supabase.from("typing_status").upsert({
       conversation_id: created.id,
       visitor_typing: false,
       admin_typing: false,
-      updated_at: new Date().toISOString(),
+      visitor_last_typing_at: now,
+      admin_last_typing_at: now,
+      updated_at: now,
     });
 
     return created;
@@ -353,10 +369,7 @@ function ChatWidgetContent() {
       .eq("conversation_id", conversationId)
       .order("created_at", { ascending: true });
 
-    if (error) {
-      console.error("Load messages error:", error);
-      return;
-    }
+    if (error) return;
 
     const list = (data || []) as Message[];
 
@@ -402,43 +415,57 @@ function ChatWidgetContent() {
   }
 
   async function checkAdminStatus() {
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from("admin_status")
-      .select("*")
+      .select("id,is_online,last_seen_at,updated_at")
       .eq("id", "xiaojujun")
-      .maybeSingle();
+      .limit(1);
 
-    if (!data) {
+    if (error) {
       setIsAdminOnline(false);
       return;
     }
 
-    const lastSeen = data.last_seen_at
-      ? new Date(data.last_seen_at).getTime()
+    const status = data?.[0];
+
+    if (!status) {
+      setIsAdminOnline(false);
+      return;
+    }
+
+    const lastSeen = status.last_seen_at
+      ? new Date(status.last_seen_at).getTime()
       : 0;
 
-    const online = data.is_online && Date.now() - lastSeen < 8000;
+    const stillActive = Date.now() - lastSeen < 5 * 60 * 1000;
 
-    setIsAdminOnline(Boolean(online));
+    setIsAdminOnline(Boolean(status.is_online) && stillActive);
   }
 
   async function checkTypingStatus(conversationId: string) {
-    const { data } = await supabase
+    const { data, error } = await supabase
       .from("typing_status")
       .select("*")
       .eq("conversation_id", conversationId)
-      .maybeSingle();
+      .limit(1);
 
-    if (!data) {
+    if (error) {
       setIsAdminTyping(false);
       return;
     }
 
-    const lastTyping = data.admin_last_typing_at
-      ? new Date(data.admin_last_typing_at).getTime()
+    const status = data?.[0];
+
+    if (!status) {
+      setIsAdminTyping(false);
+      return;
+    }
+
+    const lastTyping = status.admin_last_typing_at
+      ? new Date(status.admin_last_typing_at).getTime()
       : 0;
 
-    const typing = data.admin_typing && Date.now() - lastTyping < 3000;
+    const typing = status.admin_typing && Date.now() - lastTyping < 3000;
 
     setIsAdminTyping(Boolean(typing));
   }
@@ -573,11 +600,15 @@ function ChatWidgetContent() {
             return;
           }
 
+          const reply =
+            data.reply ||
+            "我可以帮你了解 XiaoJuJun 的作品、合作方式和联系方式。";
+
           const aiReply: Message = {
             role: "bot",
             sender: "ai",
-            text: data.reply,
-            content: data.reply,
+            text: reply,
+            content: reply,
             created_at: getNowIso(),
             client_message_id: clientMessageId,
           };
@@ -621,11 +652,20 @@ function ChatWidgetContent() {
       let conv = conversation;
 
       if (conv?.id) {
-        const { data: existingConversation } = await supabase
+        const { data: existingList, error: existingError } = await supabase
           .from("conversations")
           .select("*")
           .eq("id", conv.id)
-          .maybeSingle();
+          .limit(1);
+
+        if (existingError) {
+          alert(`读取聊天室失败：${existingError.message}`);
+          return;
+        }
+
+        const existingConversation = existingList?.[0] as
+          | Conversation
+          | undefined;
 
         if (!existingConversation) {
           setConversation(null);
@@ -648,15 +688,33 @@ function ChatWidgetContent() {
         updated_at: new Date().toISOString(),
       });
 
-      const { error } = await supabase.from("messages").insert({
-        conversation_id: conv.id,
-        sender: "user",
-        content: messageText,
-      });
+      const now = new Date().toISOString();
+
+      const { data: insertedMessages, error } = await supabase
+        .from("messages")
+        .insert({
+          id: createDbId(),
+          conversation_id: conv.id,
+          sender: "user",
+          content: messageText,
+          created_at: now,
+        })
+        .select("*")
+        .limit(1);
 
       if (error) {
-        console.error("Send message error:", error);
+        alert(`消息发送失败：${error.message}`);
         return;
+      }
+
+      if (insertedMessages?.[0]) {
+        const insertedMessage = insertedMessages[0] as Message;
+
+        setHumanMessages((prev) => {
+          const exists = prev.some((msg) => msg.id === insertedMessage.id);
+          if (exists) return prev;
+          return [...prev, insertedMessage];
+        });
       }
 
       await supabase
@@ -664,8 +722,9 @@ function ChatWidgetContent() {
         .update({
           last_message: messageText,
           last_sender: "user",
-          last_message_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
+          last_message_at: now,
+          updated_at: now,
+          status: "open",
         })
         .eq("id", conv.id);
 
@@ -871,7 +930,7 @@ function ChatWidgetContent() {
 
                   return (
                     <div
-                      key={msg.id || index}
+                      key={msg.id || `${msg.sender}-${msg.created_at}-${index}`}
                       className={`flex ${
                         isUser ? "justify-end" : "justify-start"
                       }`}
