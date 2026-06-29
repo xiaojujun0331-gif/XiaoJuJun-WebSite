@@ -9,10 +9,7 @@ export default function Navbar() {
         </Link>
 
         <div className="flex items-center gap-5 text-sm font-medium">
-          <Link
-            href="/"
-            className="text-zinc-400 hover:text-white transition"
-          >
+          <Link href="/" className="text-zinc-400 hover:text-white transition">
             Home
           </Link>
 
@@ -35,6 +32,13 @@ export default function Navbar() {
             className="text-zinc-400 hover:text-white transition"
           >
             Contact
+          </Link>
+
+          <Link
+            href="/support"
+            className="rounded-full bg-white px-4 py-2 text-black font-black hover:bg-zinc-200 transition"
+          >
+            Support
           </Link>
         </div>
       </div>
