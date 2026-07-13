@@ -167,10 +167,39 @@ export default function AdminChatPage() {
     scrollToBottom();
   }, [humanMessages, selectedAiGroup?.messages.length]);
 
+  async function enableNotificationSound() {
+    try {
+      const audio = new Audio("/notification.mp3");
+      audio.volume = 0.5;
+
+      await audio.play();
+
+      audio.pause();
+      audio.currentTime = 0;
+
+      audioRef.current = audio;
+      setSoundEnabled(true);
+
+      alert("新消息声音提醒已开启");
+    } catch {
+      setSoundEnabled(false);
+      alert("浏览器阻止了声音播放，请再点一次按钮或检查浏览器声音权限。");
+    }
+  }
+
   function playNotificationSound() {
     if (!soundEnabled) return;
 
-    audioRef.current?.play().catch(() => {});
+    try {
+      if (!audioRef.current) {
+        audioRef.current = new Audio("/notification.mp3");
+      }
+
+      audioRef.current.currentTime = 0;
+      audioRef.current.play().catch(() => {});
+    } catch {
+      // ignore browser audio block
+    }
   }
 
   function scrollToBottom() {
@@ -524,10 +553,16 @@ export default function AdminChatPage() {
             </div>
 
             <button
-              onClick={() => setSoundEnabled(true)}
-              className="w-full mt-6 rounded-2xl bg-white text-black px-5 py-4 font-black hover:bg-zinc-200 transition"
+              onClick={enableNotificationSound}
+              className={`w-full mt-6 rounded-2xl px-5 py-4 font-black transition ${
+                soundEnabled
+                  ? "bg-green-400 text-black"
+                  : "bg-white text-black hover:bg-zinc-200"
+              }`}
             >
-              开启新消息声音提醒
+              {soundEnabled
+                ? "新消息声音提醒已开启"
+                : "开启新消息声音提醒"}
             </button>
           </div>
 
